@@ -1,52 +1,57 @@
 import express from "express";
-import nodemailer from "nodemailer";
-import multer from "multer";
 import cors from "cors";
-import path from "path";
+import multer from "multer";
+import sgMail from "@sendgrid/mail";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 3001;
 
-// Use Multer to handle file uploads
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Configure CORS to allow your frontend
+app.use(cors({
+  origin: ["http://localhost:5173", "https://your-production-frontend.com"], // allow local dev + prod URL
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type"]
+}));
+
+// Multer config for handling file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-// POST endpoint to receive orders
+app.use(express.json());
+
 app.post("/send-order", upload.array("attachments", 10), async (req, res) => {
   try {
     const { name, email, phone, message } = req.body;
-    const attachments = req.files?.map(file => ({
+
+    const attachments = (req.files || []).map((file) => ({
+      content: file.buffer.toString("base64"),
       filename: file.originalname,
-      content: file.buffer
-    })) || [];
+      type: file.mimetype,
+      disposition: "attachment",
+    }));
 
-    // Create Nodemailer transporter using environment variables
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.MAIL_USER, // Gmail address
-        pass: process.env.MAIL_PASS  // Gmail app password
-      }
-    });
-
-    // Send the email
-    const info = await transporter.sendMail({
-      from: process.env.MAIL_USER,
-      to: process.env.MAIL_USER, // your email
-      subject: `New Order from ${name}`,
+    const msg = {
+      to: "celicacoa@gmail.com",
+      from: email, // optional: must be verified in SendGrid
+      subject: `New KooWhips Order from ${name}`,
       text: message,
-      attachments
-    });
+      attachments,
+    };
 
-    console.log("Email sent:", info.messageId);
-    res.json({ success: true, message: "Email sent successfully." });
+    await sgMail.send(msg);
 
+    res.json({ success: true, message: "Email sent successfully!" });
   } catch (error) {
     console.error("Error sending email:", error);
-    res.json({ success: false, message: "Failed to send email." });
+    res.json({ success: false, message: "Failed to send email.", error: error.toString() });
   }
 });
 
-// Listen on dynamic port (Render provides PORT)
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});

@@ -1,99 +1,94 @@
 import express from "express";
+import cors from "cors";
 import multer from "multer";
-import nodemailer from "nodemailer";
-import path from "path";
-import fs from "fs";
+import sgMail from "@sendgrid/mail";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
 
-// Multer setup to handle file uploads
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+// Set your SendGrid API key
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
-// Parse form-data
-app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// Middleware
+app.use(cors());
+const upload = multer();
 
-// Your email configuration (update with your SMTP settings)
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com", // or your SMTP host
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER, // your email
-    pass: process.env.EMAIL_PASS, // app password or real password
-  },
-});
-
-// POST route to receive order
+// Endpoint to receive orders
 app.post("/send-order", upload.array("attachments"), async (req, res) => {
   try {
-    const { name, email, phone, instructions, numProjects, price, currency } = req.body;
+    const {
+      customerName,
+      customerEmail,
+      customerPhone,
+      orderItems, // this should be a stringified JSON or simple string of order info
+    } = req.body;
 
-    if (!name || !email) {
-      return res.status(400).json({ success: false, message: "Name and email are required" });
+    if (!customerName || !customerEmail || !orderItems) {
+      return res.status(400).json({ success: false, message: "Missing required fields." });
     }
 
-    // Generate an order number
+    // Generate order number
     const orderNumber = `KW-${Date.now()}`;
 
     // Current date/time
-    const orderDate = new Date().toLocaleString();
+    const orderDate = new Date().toLocaleString("en-CA", { timeZone: "America/Vancouver" });
+
+    // Logo URL (GitHub raw link)
+    const logoUrl = "https://github.com/UrbanCocoa/my-site/blob/main/src/assets/KW/Instagram.png?raw=true";
 
     // Build HTML email
-    let htmlContent = `
-      <div style="font-family: Arial, sans-serif; background:#f9f9f9; padding:20px;">
-        <div style="text-align:center; margin-bottom:20px;">
-          <img src="https://github.com/UrbanCocoa/my-site/blob/main/src/assets/KW/Instagram.png?raw=true" alt="KooWhips Logo" width="120" />
-          <h2 style="color:#1a1a1a;">New Order Received</h2>
+    const emailContent = `
+      <div style="font-family: Arial, sans-serif; color: #333;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <img src="${logoUrl}" alt="KooWhips Logo" style="width: 150px;"/>
+          <h1 style="color: #FF6F61;">New Order Received</h1>
         </div>
-        <div style="background:#ffffff; padding:20px; border-radius:8px;">
-          <p><strong>Order #:</strong> ${orderNumber}</p>
-          <p><strong>Date:</strong> ${orderDate}</p>
-          <hr/>
-          <h3 style="color:#1a1a1a;">Customer Information</h3>
-          <p><strong>Name:</strong> ${name}</p>
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Phone:</strong> ${phone || "N/A"}</p>
-          <hr/>
-          <h3 style="color:#1a1a1a;">Order Details</h3>
-          <p><strong>Number of Projects:</strong> ${numProjects}</p>
-          <p><strong>Price:</strong> ${currency}${price}</p>
-          <p><strong>Instructions:</strong> ${instructions || "N/A"}</p>
-          <hr/>
-          <h3 style="color:#1a1a1a;">Uploaded Images</h3>
-          ${req.files && req.files.length > 0 
-            ? req.files.map(f => `<p>${f.originalname}</p>`).join("") 
-            : "<p>No files uploaded</p>"
-          }
+
+        <p><strong>Order #:</strong> ${orderNumber}</p>
+        <p><strong>Date/Time:</strong> ${orderDate}</p>
+
+        <h2 style="color: #FF6F61;">Customer Info</h2>
+        <p><strong>Name:</strong> ${customerName}</p>
+        <p><strong>Email:</strong> ${customerEmail}</p>
+        <p><strong>Phone:</strong> ${customerPhone || "N/A"}</p>
+
+        <h2 style="color: #FF6F61;">Order Details</h2>
+        <div style="border: 1px solid #FF6F61; padding: 10px; border-radius: 8px;">
+          <pre style="white-space: pre-wrap; word-wrap: break-word;">${orderItems}</pre>
         </div>
+
+        <p style="margin-top: 20px;">This order was submitted via the KooWhips website.</p>
       </div>
     `;
 
-    // Build attachments for Nodemailer
-    const attachments = req.files?.map((file) => ({
+    // Process attachments
+    const attachments = req.files?.map(file => ({
+      content: file.buffer.toString("base64"),
       filename: file.originalname,
-      content: file.buffer,
+      type: file.mimetype,
+      disposition: "attachment",
     }));
 
-    const mailOptions = {
-      from: `"KooWhips Orders" <${process.env.EMAIL_USER}>`,
-      to: process.env.EMAIL_USER, // send only to yourself
-      subject: `New Order: ${orderNumber}`,
-      html: htmlContent,
-      attachments: attachments,
+    const msg = {
+      to: "celicacoa@gmail.com",
+      from: "celicacoa@gmail.com", // Must match verified sender in SendGrid
+      subject: `New Order Received - ${orderNumber}`,
+      html: emailContent,
+      attachments,
     };
 
-    await transporter.sendMail(mailOptions);
+    await sgMail.send(msg);
 
-    res.json({ success: true, message: "Order email sent successfully" });
+    res.json({ success: true, orderNumber });
   } catch (err) {
     console.error("❌ Error sending email:", err);
-    res.status(500).json({ success: false, message: "Failed to send order" });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });

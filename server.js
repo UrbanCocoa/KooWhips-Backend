@@ -1,68 +1,95 @@
 import express from "express";
 import cors from "cors";
-import sgMail from "@sendgrid/mail";
+import multer from "multer";
+import sendgrid from "@sendgrid/mail";
+import dotenv from "dotenv";
+import fs from "fs";
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "25mb" }));
 
-app.post("/send-order", async (req, res) => {
+// ✅ Multer setup to handle multipart/form-data (images + text fields)
+const upload = multer({ storage: multer.memoryStorage() });
+
+// ✅ Set SendGrid API key
+sendgrid.setApiKey(process.env.SENDGRID_API_KEY);
+
+// ✅ Handle order submissions
+app.post("/send-order", upload.array("attachments", 5), async (req, res) => {
   try {
-    const { customerName, customerEmail, customerPhone, items } = req.body;
+    const {
+      customerName,
+      customerEmail,
+      customerPhone,
+    } = req.body;
 
-    // Generate HTML
-    let html = `
-      <h1>New Koowhips Order</h1>
+    // Validate input
+    if (!customerName || !customerEmail) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
+    }
+
+    // Parse order items
+    const orderItems = [];
+    for (let key in req.body) {
+      if (key.startsWith("order[")) {
+        const match = key.match(/order\[(\d+)\]\[(.*?)\]/);
+        if (match) {
+          const [_, index, field] = match;
+          if (!orderItems[index]) orderItems[index] = {};
+          orderItems[index][field] = req.body[key];
+        }
+      }
+    }
+
+    // ✅ Build email content
+    const htmlContent = `
+      <h2>🧾 New Order Received</h2>
       <p><strong>Name:</strong> ${customerName}</p>
       <p><strong>Email:</strong> ${customerEmail}</p>
       <p><strong>Phone:</strong> ${customerPhone || "N/A"}</p>
-      <hr/>
+      <h3>Order Details:</h3>
+      ${orderItems
+        .map(
+          (item, i) => `
+        <div style="margin-bottom:10px;padding:8px;border:1px solid #ccc;border-radius:8px;">
+          <p><strong>Item ${i + 1}</strong></p>
+          <p>Type: ${item.type || "N/A"}</p>
+          <p>Projects: ${item.numProjects || "N/A"}</p>
+          <p>Instructions: ${item.instructions || "N/A"}</p>
+          <p>Price: ${item.price || "N/A"}</p>
+        </div>
+      `
+        )
+        .join("")}
     `;
 
-    const attachments = [];
+    // ✅ Handle attachments
+    const attachments = req.files?.map((file) => ({
+      content: file.buffer.toString("base64"),
+      filename: file.originalname,
+      type: file.mimetype,
+      disposition: "attachment",
+    })) || [];
 
-    items.forEach((item, idx) => {
-      html += `
-        <h2>${item.name}</h2>
-        <p><strong>Projects:</strong> ${item.numProjects}</p>
-        <p><strong>Price:</strong> ${item.currency} ${item.price}</p>
-        <p><strong>Instructions:</strong> ${item.instructions || "None"}</p>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-      `;
-      if (item.imageAttachments && item.imageAttachments.length > 0) {
-        item.imageAttachments.forEach((base64, i) => {
-          attachments.push({
-            content: base64,
-            filename: `item${idx + 1}_image${i + 1}.jpg`,
-            type: "image/jpeg",
-            disposition: "attachment",
-          });
-          // Also inline preview in email
-          html += `<img src="data:image/jpeg;base64,${base64}" style="width:150px; height:150px; object-fit:contain; margin:4px;"/>`;
-        });
-      }
-      html += "</div><hr/>";
-    });
-
+    // ✅ Send email via SendGrid
     const msg = {
-      to: "celicacoa@gmail.com",
-      from: "celicacoa@gmail.com",
-      subject: `🎨 New Koowhips Order from ${customerName}`,
-      html,
+      to: "celicacoa@gmail.com", // your receiving email
+      from: "celicacoa@gmail.com", // must match your verified sender
+      subject: `New Order from ${customerName}`,
+      html: htmlContent,
       attachments,
     };
 
-    await sgMail.send(msg);
-    console.log("✅ Email sent successfully!");
+    await sendgrid.send(msg);
+
     res.json({ success: true });
-  } catch (error) {
-    console.error("❌ Error sending email:", error);
-    res.status(500).json({ success: false, error: error.message });
+  } catch (err) {
+    console.error("❌ Error sending email:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-app.listen(process.env.PORT || 3001, () => {
-  console.log("Server running...");
-});
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));

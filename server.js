@@ -1,95 +1,102 @@
 import express from "express";
-import cors from "cors";
 import multer from "multer";
-import sendgrid from "@sendgrid/mail";
+import nodemailer from "nodemailer";
+import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
+import path from "path";
 
 dotenv.config();
 
 const app = express();
+const PORT = process.env.PORT || 5000;
+
 app.use(cors());
 
-// ✅ Multer setup to handle multipart/form-data (images + text fields)
-const upload = multer({ storage: multer.memoryStorage() });
+// Multer setup (for file uploads)
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
-// ✅ Set SendGrid API key
-sendgrid.setApiKey(process.env.SENDGRID_API_KEY);
+// Root route for sanity check
+app.get("/", (req, res) => {
+  res.send("✅ Koowhips backend is running");
+});
 
-// ✅ Handle order submissions
-app.post("/send-order", upload.array("attachments", 5), async (req, res) => {
+// Send order route (handles multipart/form-data)
+app.post("/send-order", upload.array("attachments"), async (req, res) => {
   try {
-    const {
-      customerName,
-      customerEmail,
-      customerPhone,
-    } = req.body;
+    // SAFELY extract body data
+    const { customerName, customerEmail, customerPhone } = req.body || {};
 
-    // Validate input
     if (!customerName || !customerEmail) {
-      return res.status(400).json({ success: false, error: "Missing required fields" });
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Parse order items
-    const orderItems = [];
-    for (let key in req.body) {
-      if (key.startsWith("order[")) {
-        const match = key.match(/order\[(\d+)\]\[(.*?)\]/);
+    // Build readable order details
+    const orderEntries = Object.keys(req.body)
+      .filter((key) => key.startsWith("order["))
+      .reduce((acc, key) => {
+        const match = key.match(/order\[(\d+)\]\[(.+)\]/);
         if (match) {
           const [_, index, field] = match;
-          if (!orderItems[index]) orderItems[index] = {};
-          orderItems[index][field] = req.body[key];
+          if (!acc[index]) acc[index] = {};
+          acc[index][field] = req.body[key];
         }
-      }
-    }
+        return acc;
+      }, []);
 
-    // ✅ Build email content
-    const htmlContent = `
-      <h2>🧾 New Order Received</h2>
+    // Build HTML email summary
+    let emailBody = `
+      <h2>New Order Received</h2>
       <p><strong>Name:</strong> ${customerName}</p>
       <p><strong>Email:</strong> ${customerEmail}</p>
-      <p><strong>Phone:</strong> ${customerPhone || "N/A"}</p>
+      <p><strong>Phone:</strong> ${customerPhone || "Not provided"}</p>
+      <hr/>
       <h3>Order Details:</h3>
-      ${orderItems
-        .map(
-          (item, i) => `
-        <div style="margin-bottom:10px;padding:8px;border:1px solid #ccc;border-radius:8px;">
-          <p><strong>Item ${i + 1}</strong></p>
-          <p>Type: ${item.type || "N/A"}</p>
-          <p>Projects: ${item.numProjects || "N/A"}</p>
-          <p>Instructions: ${item.instructions || "N/A"}</p>
-          <p>Price: ${item.price || "N/A"}</p>
-        </div>
-      `
-        )
-        .join("")}
     `;
 
-    // ✅ Handle attachments
+    orderEntries.forEach((item, index) => {
+      emailBody += `
+        <div style="margin-bottom: 20px;">
+          <h4>Item ${index + 1}</h4>
+          <p><strong>Type:</strong> ${item.type || "Custom Artwork"}</p>
+          <p><strong>Number of Projects:</strong> ${item.numProjects || "N/A"}</p>
+          <p><strong>Instructions:</strong> ${item.instructions || "N/A"}</p>
+          <p><strong>Price:</strong> ${item.price || "N/A"}</p>
+        </div>
+      `;
+    });
+
+    // Handle attachments (images)
     const attachments = req.files?.map((file) => ({
-      content: file.buffer.toString("base64"),
       filename: file.originalname,
-      type: file.mimetype,
-      disposition: "attachment",
+      content: file.buffer,
     })) || [];
 
-    // ✅ Send email via SendGrid
-    const msg = {
-      to: "celicacoa@gmail.com", // your receiving email
-      from: "celicacoa@gmail.com", // must match your verified sender
-      subject: `New Order from ${customerName}`,
-      html: htmlContent,
+    // Send email
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    const mailOptions = {
+      from: process.env.EMAIL_USER,
+      to: process.env.RECEIVER_EMAIL || process.env.EMAIL_USER,
+      subject: `New Koowhips Order from ${customerName}`,
+      html: emailBody,
       attachments,
     };
 
-    await sendgrid.send(msg);
+    await transporter.sendMail(mailOptions);
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error("❌ Error sending email:", err);
-    res.status(500).json({ success: false, error: err.message });
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("❌ Error sending email:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

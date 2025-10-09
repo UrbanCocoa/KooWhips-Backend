@@ -14,7 +14,7 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 // Allow requests from frontend (dev + production)
 app.use(cors({
-  origin: ["http://localhost:5173", "https://your-frontend-production-domain.com"],
+  origin: ["http://localhost:5173", "https://koowhips.ca"],
   methods: ["GET", "POST"],
 }));
 

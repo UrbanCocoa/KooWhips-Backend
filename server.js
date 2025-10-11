@@ -86,7 +86,7 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; color: #1a1a1a; background-color:#fafafa; padding:20px;">
         <div style="text-align:center; margin-bottom:20px;">
-          <img src="https://raw.githubusercontent.com/UrbanCocoa/KooWhips/main/src/assets/KW/Longbanner.png"
+          <img src="https://github.com/UrbanCocoa/KooWhips/blob/main/src/assets/KW/Instagram.png"
                alt="KooWhips Logo" style="width:100%; max-width:400px; border-radius:8px;" />
         </div>
         <h2 style="color:#FF6F61;">🎨 New Order Received</h2>

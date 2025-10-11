@@ -88,10 +88,9 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
 
     const orderNumber = generateOrderNumber();
 
-    // ✅ Use a reliable hosted image (you can replace this with your own CDN/Render URL)
-    const logoURL = "https://i.imgur.com/YOUR_LOGO_IMAGE.png";
+    const logoURL = "https://koowhips.ca/assets/logo.png"; // ✅ Use your hosted logo
 
-    // Build HTML email content
+    // Build HTML email
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; color: #222; background-color: #f9f9f9; padding: 20px; border-radius: 8px;">
         <div style="text-align:center; margin-bottom:20px;">
@@ -114,26 +113,29 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
           ? parsedItems
               .map(
                 (item, idx) => `
-            <div style="margin-bottom:20px; padding:10px; background:#fff; border-radius:8px;">
-              <p><strong>Item ${idx + 1}</strong></p>
-              <p><strong>Product Type:</strong> ${item.productType || "N/A"}</p>
-              <p><strong>Number of Projects:</strong> ${
-                item.numProjects || item.numStickers || "N/A"
-              }</p>
-              <p><strong>Instructions:</strong> ${
-                item.instructions?.trim() || "None provided"
-              }</p>
-              <p><strong>Price:</strong> ${item.currency || "CAD"} ${
+              <div style="margin-bottom:20px; padding:15px; background:#fff; border-radius:8px;">
+                <h4 style="margin-bottom:10px; color:#ff6f61;">${
+                  item.productType === "artwork"
+                    ? "🎨 Digital Artwork"
+                    : item.productType === "sticker"
+                    ? "✨ Sticker Order"
+                    : "🛒 Product"
+                }</h4>
+                <p><strong>Number of Projects:</strong> ${
+                  item.numProjects || item.numStickers || "N/A"
+                }</p>
+                <p><strong>Instructions:</strong> ${
+                  item.instructions?.trim() || "None provided"
+                }</p>
+                <p><strong>Price:</strong> ${item.currency || "CAD"} ${
                   item.price || "0.00"
                 }</p>
-              ${
-                item.imageFiles?.length
-                  ? `<p><strong>Images Uploaded:</strong> ${
-                      item.imageFiles.length
-                    }</p>`
-                  : ""
-              }
-            </div>`
+                ${
+                  item.imageFiles?.length
+                    ? `<p><strong>Images Uploaded:</strong> ${item.imageFiles.length}</p>`
+                    : ""
+                }
+              </div>`
               )
               .join("")
           : "<p>No order items found.</p>"}

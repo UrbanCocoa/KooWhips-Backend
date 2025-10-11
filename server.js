@@ -1,9 +1,9 @@
+// server.js
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import sgMail from "@sendgrid/mail";
 import dotenv from "dotenv";
-import fs from "fs";
 
 dotenv.config();
 
@@ -12,9 +12,13 @@ const port = process.env.PORT || 3000;
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+// Allow requests from frontend (dev + production)
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://koowhips.ca"],
+    origin: [
+      "http://localhost:5173",
+      "https://koowhips.ca", // live frontend
+    ],
     methods: ["GET", "POST"],
   })
 );
@@ -24,44 +28,28 @@ app.use(express.urlencoded({ extended: true }));
 
 const upload = multer();
 
-// --- Helpers ---
+// Helper: format date/time
 function formatDateTime(date) {
   return date.toLocaleString("en-CA", { timeZone: "America/Toronto" });
 }
 
-function getTodayKey() {
+// Track order counts by date (resets daily)
+const orderCountByDate = {};
+
+// Generate order number format: KW-MMDDYY##
+function generateOrderNumber() {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   const year = String(now.getFullYear()).slice(-2);
-  return `${month}${day}${year}`;
+
+  const dateKey = `${year}${month}${day}`;
+  orderCountByDate[dateKey] = (orderCountByDate[dateKey] || 0) + 1;
+  const count = String(orderCountByDate[dateKey]).padStart(2, "0");
+
+  return `KW-${month}${day}${year}${count}`;
 }
 
-function generateOrderNumber() {
-  const key = getTodayKey();
-  let data = {};
-
-  try {
-    if (fs.existsSync("orderCount.json")) {
-      data = JSON.parse(fs.readFileSync("orderCount.json", "utf8"));
-    }
-  } catch (err) {
-    console.error("Error reading orderCount.json:", err);
-  }
-
-  data[key] = (data[key] || 0) + 1;
-
-  try {
-    fs.writeFileSync("orderCount.json", JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Error writing orderCount.json:", err);
-  }
-
-  const orderNumber = `KW-${key}${String(data[key]).padStart(2, "0")}`;
-  return orderNumber;
-}
-
-// --- Email endpoint ---
 app.post("/send-order", upload.array("attachments"), async (req, res) => {
   try {
     const { customerName, customerEmail, customerPhone, orderItems } = req.body;
@@ -72,9 +60,7 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
         .json({ success: false, message: "Missing required fields" });
     }
 
-    const parsedItems = JSON.parse(orderItems);
     const attachments = [];
-
     if (req.files && req.files.length > 0) {
       req.files.forEach((file) => {
         attachments.push({
@@ -86,63 +72,69 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
       });
     }
 
+    const parsedItems = JSON.parse(orderItems);
     const orderNumber = generateOrderNumber();
 
-    const logoURL = "https://koowhips.ca/assets/logo.png"; // ✅ Use your hosted logo
+    // Calculate total order price
+    const totalPrice = parsedItems.reduce((acc, item) => {
+      const price = parseFloat(item.price || 0);
+      return acc + (isNaN(price) ? 0 : price);
+    }, 0);
+    const displayCurrency = parsedItems[0]?.currency || "CAD";
 
     // Build HTML email
     const htmlContent = `
-      <div style="font-family: Arial, sans-serif; color: #222; background-color: #f9f9f9; padding: 20px; border-radius: 8px;">
+      <div style="font-family: Arial, sans-serif; color: #1a1a1a; background-color:#fafafa; padding:20px;">
         <div style="text-align:center; margin-bottom:20px;">
-          <img src="${logoURL}" alt="KooWhips Logo" style="width:160px;"/>
+          <img src="https://raw.githubusercontent.com/UrbanCocoa/KooWhips/main/src/assets/KW/Longbanner.png"
+               alt="KooWhips Logo" style="width:100%; max-width:400px; border-radius:8px;" />
         </div>
-        <h2 style="color:#ff6f61; text-align:center;">🎨 New KooWhips Order Received</h2>
+        <h2 style="color:#FF6F61;">🎨 New Order Received</h2>
         <p><strong>Order #:</strong> ${orderNumber}</p>
         <p><strong>Date/Time:</strong> ${formatDateTime(new Date())}</p>
-        <hr style="margin:20px 0;"/>
+        <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;"/>
 
-        <h3>👤 Customer Info</h3>
+        <h3 style="color:#333;">👤 Customer Info</h3>
         <p><strong>Name:</strong> ${customerName}</p>
         <p><strong>Email:</strong> ${customerEmail}</p>
         ${customerPhone ? `<p><strong>Phone:</strong> ${customerPhone}</p>` : ""}
+        <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;"/>
 
-        <hr style="margin:20px 0;"/>
-
-        <h3>🛒 Order Details</h3>
+        <h3 style="color:#333;">🛒 Order Details</h3>
         ${Array.isArray(parsedItems)
           ? parsedItems
               .map(
-                (item, idx) => `
-              <div style="margin-bottom:20px; padding:15px; background:#fff; border-radius:8px;">
-                <h4 style="margin-bottom:10px; color:#ff6f61;">${
-                  item.productType === "artwork"
-                    ? "🎨 Digital Artwork"
-                    : item.productType === "sticker"
-                    ? "✨ Sticker Order"
-                    : "🛒 Product"
-                }</h4>
-                <p><strong>Number of Projects:</strong> ${
-                  item.numProjects || item.numStickers || "N/A"
+                (item) => `
+          <div style="margin-bottom:20px; padding:12px; background:#fff; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.05);">
+            <p><strong>Product Type:</strong> ${item.type || "N/A"}</p>
+            <p><strong>Number of Projects:</strong> ${
+              item.numProjects || item.numStickers || 1
+            }</p>
+            <p><strong>Images Uploaded:</strong> ${
+              item.imageFiles ? item.imageFiles.length : 0
+            }</p>
+            <p><strong>Price:</strong> ${item.currency || "CAD"} ${
+                  item.price || "N/A"
                 }</p>
-                <p><strong>Instructions:</strong> ${
-                  item.instructions?.trim() || "None provided"
-                }</p>
-                <p><strong>Price:</strong> ${item.currency || "CAD"} ${
-                  item.price || "0.00"
-                }</p>
-                ${
-                  item.imageFiles?.length
-                    ? `<p><strong>Images Uploaded:</strong> ${item.imageFiles.length}</p>`
-                    : ""
-                }
-              </div>`
+            <p><strong>Instructions:</strong> ${
+              item.instructions?.trim() || "None provided"
+            }</p>
+          </div>
+        `
               )
               .join("")
-          : "<p>No order items found.</p>"}
+          : ""}
 
-        <hr style="margin:20px 0;"/>
-        <p style="text-align:center; color:#777; font-size:12px;">
-          This is an automated email from KooWhips. Please do not reply.
+        <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;"/>
+
+        <h3 style="color:#333;">💰 Order Summary</h3>
+        <p style="font-size:16px;">
+          <strong>Total:</strong> ${displayCurrency} ${totalPrice.toFixed(2)}
+        </p>
+
+        <hr style="margin:20px 0; border:none; border-top:1px solid #ddd;"/>
+        <p style="text-align:center; color:#777;">
+          This is an automated order notification from <strong>KooWhips</strong>.
         </p>
       </div>
     `;
@@ -150,7 +142,7 @@ app.post("/send-order", upload.array("attachments"), async (req, res) => {
     const msg = {
       to: "celicacoa@gmail.com",
       from: "celicacoa@gmail.com",
-      subject: `🧾 KooWhips Order #${orderNumber}`,
+      subject: `New KooWhips Order #${orderNumber}`,
       html: htmlContent,
       attachments,
     };
